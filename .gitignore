@@ -1,0 +1,43 @@
+# Compiled Go binaries
+/gateway
+/mock_projector
+/edge-gateway
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, consumed by `go tool cover`
+*.out
+
+# Dependency directories (only needed if using vendoring)
+# vendor/
+
+# Local cryptographic keys/certificates (highly important)
+cert.pem
+key.pem
+*.key
+*.crt
+*.pem
+
+# IDE / Editor configuration
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

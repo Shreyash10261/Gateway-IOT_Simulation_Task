@@ -3,7 +3,7 @@ METRICS_PORT: 9090
 HEALTH_PORT: 8085
 REGISTRY_PATH: "./devices.json"
 NETWORK_TIMEOUT_MS: 5000
-IOT_HUB_HOSTNAME: "edge-gateway.azure-devices.net"
+IOT_HUB_HOSTNAME: "AV-IOT-HUB.azure-devices.net"
 CERT_PATH: "./cert.pem"
 KEY_PATH: "./key.pem"
 WORKER_POOL_SIZE: 10
