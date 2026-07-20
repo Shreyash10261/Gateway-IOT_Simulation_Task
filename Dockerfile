@@ -33,7 +33,7 @@ WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 # Install necessary network tools for testing
-RUN apk add --no-cache ca-certificates tzdata curl iproute2 tcpdump
+RUN apk add --no-cache ca-certificates tzdata curl iproute2 tcpdump iptables iputils
 
 # Copy the binary from builder
 COPY --from=builder /app/gateway .
