@@ -1,0 +1,16 @@
+[
+  {
+    "id": "Projector01",
+    "vendor": "Epson",
+    "ip": "iot_golang_vdr",
+    "port": 4352,
+    "protocol": "PJLink"
+  },
+  {
+    "id": "Camera01",
+    "vendor": "Hikvision",
+    "ip": "192.168.1.102",
+    "port": 80,
+    "protocol": "ISAPI"
+  }
+]

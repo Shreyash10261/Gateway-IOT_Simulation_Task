@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: edge-gateway-sim
+    restart: unless-stopped
+    ports:
+      - "8085:8085" # Health probes
+      - "9090:9090" # Prometheus metrics
+    volumes:
+      # Mount the configuration and certificates directly into the container's working directory
+      - ./config.yaml:/app/config.yaml:ro
+      - ./devices.json:/app/devices.json:ro
+      - ./cert.pem:/app/cert.pem:ro
+      - ./key.pem:/app/key.pem:ro
+    environment:
+      # We can override config.yaml values via environment variables here if needed
+      - GATEWAY_LOG_LEVEL=info

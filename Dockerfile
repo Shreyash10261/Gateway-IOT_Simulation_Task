@@ -1,48 +1,34 @@
-# Stage 1: Build
-FROM golang:1.20-alpine AS builder
-WORKDIR /app
+# Stage 1: Build the Go binary
+FROM golang:alpine AS builder
 
-# Install git for downloading dependencies
-RUN apk add --no-cache git
+# Set the Current Working Directory inside the container
+WORKDIR /build
 
-# Copy go mod files and download dependencies (if present)
-# Using wildcard in case they are not yet initialized
-COPY go.mod go.sum* ./
-RUN if [ -f go.mod ]; then go mod download; fi
+# Copy go mod and sum files
+COPY go.mod go.sum ./
 
-# Copy source code
+# Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
+RUN go mod download
+
+# Copy the source from the current directory to the Working Directory inside the container
 COPY . .
 
-# Build the Go application
-# Assuming main.go will be in cmd/gateway/main.go or root
-RUN if [ -f cmd/gateway/main.go ]; then \
-        CGO_ENABLED=0 GOOS=linux go build -o gateway ./cmd/gateway/main.go; \
-    elif [ -f main.go ]; then \
-        CGO_ENABLED=0 GOOS=linux go build -o gateway main.go; \
-    else \
-        echo "No main.go found, creating a dummy binary for scaffolding"; \
-        echo 'package main; import "fmt"; func main() { fmt.Println("Gateway Placeholder") }' > main.go; \
-        CGO_ENABLED=0 GOOS=linux go build -o gateway main.go; \
-    fi
+# Build the Go app statically (no C dependencies)
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o gateway ./cmd/gateway
 
-# Stage 2: Minimal Runtime
+# Stage 2: A minimal alpine image to run the binary
 FROM alpine:latest
+
+# Install CA certificates so the Gateway can verify Azure's SSL certificates
+RUN apk --no-cache add ca-certificates
+
 WORKDIR /app
 
-# Create a non-root user and group
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Copy the Pre-built binary file from the previous stage
+COPY --from=builder /build/gateway .
 
-# Install necessary network tools for testing
-RUN apk add --no-cache ca-certificates tzdata curl iproute2 tcpdump iptables iputils
-
-# Copy the binary from builder
-COPY --from=builder /app/gateway .
-
-# Change ownership of the app directory to the non-root user
-RUN chown -R appuser:appgroup /app
-
-# Switch to the non-root user
-USER appuser
+# Expose the Health and Metrics ports
+EXPOSE 8085 9090
 
 # Command to run the executable
-CMD ["./gateway"]
+ENTRYPOINT ["./gateway"]
