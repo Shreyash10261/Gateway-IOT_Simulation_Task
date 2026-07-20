@@ -10,3 +10,9 @@ WORKER_POOL_SIZE: 10
 COMMAND_QUEUE_SIZE: 500
 RETRY_MAX_ATTEMPTS: 2
 RETRY_BASE_BACKOFF_MS: 100
+PROMETHEUS_URL: "http://localhost:9090"
+PROMETHEUS_METRICS:
+  - "gateway_commands_dropped_total"
+  - "gateway_command_latency_seconds_count"
+PROMETHEUS_POLL_INTERVAL: "30s"
+PROMETHEUS_MQTT_TOPIC: "devices/edge-gateway-sim/messages/events/metrics"

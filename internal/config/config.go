@@ -4,23 +4,28 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	LogLevel           string        `mapstructure:"LOG_LEVEL"`
-	MetricsPort        int           `mapstructure:"METRICS_PORT"`
-	HealthPort         int           `mapstructure:"HEALTH_PORT"`
-	RegistryPath       string        `mapstructure:"REGISTRY_PATH"`
-	NetworkTimeout     int           `mapstructure:"NETWORK_TIMEOUT_MS"`
-	CertPath           string        `mapstructure:"CERT_PATH"`
-	KeyPath            string        `mapstructure:"KEY_PATH"`
-	IotHubHostname     string        `mapstructure:"IOT_HUB_HOSTNAME"`
-	WorkerPoolSize     int           `mapstructure:"WORKER_POOL_SIZE"`
-	CommandQueueSize   int           `mapstructure:"COMMAND_QUEUE_SIZE"`
-	RetryMaxAttempts   int           `mapstructure:"RETRY_MAX_ATTEMPTS"`
-	RetryBaseBackoffMs int           `mapstructure:"RETRY_BASE_BACKOFF_MS"`
+	LogLevel               string        `mapstructure:"LOG_LEVEL"`
+	MetricsPort            int           `mapstructure:"METRICS_PORT"`
+	HealthPort             int           `mapstructure:"HEALTH_PORT"`
+	RegistryPath           string        `mapstructure:"REGISTRY_PATH"`
+	NetworkTimeout         int           `mapstructure:"NETWORK_TIMEOUT_MS"`
+	CertPath               string        `mapstructure:"CERT_PATH"`
+	KeyPath                string        `mapstructure:"KEY_PATH"`
+	IotHubHostname         string        `mapstructure:"IOT_HUB_HOSTNAME"`
+	WorkerPoolSize         int           `mapstructure:"WORKER_POOL_SIZE"`
+	CommandQueueSize       int           `mapstructure:"COMMAND_QUEUE_SIZE"`
+	RetryMaxAttempts       int           `mapstructure:"RETRY_MAX_ATTEMPTS"`
+	RetryBaseBackoffMs     int           `mapstructure:"RETRY_BASE_BACKOFF_MS"`
+	PrometheusURL          string        `mapstructure:"PROMETHEUS_URL"`
+	PrometheusMetrics      []string      `mapstructure:"PROMETHEUS_METRICS"`
+	PrometheusPollInterval time.Duration `mapstructure:"PROMETHEUS_POLL_INTERVAL"`
+	PrometheusMqttTopic    string        `mapstructure:"PROMETHEUS_MQTT_TOPIC"`
 }
 
 func Load() (*Config, error) {
@@ -35,6 +40,10 @@ func Load() (*Config, error) {
 	v.SetDefault("COMMAND_QUEUE_SIZE", 5000)
 	v.SetDefault("RETRY_MAX_ATTEMPTS", 3)
 	v.SetDefault("RETRY_BASE_BACKOFF_MS", 200)
+	v.SetDefault("PROMETHEUS_URL", "http://localhost:9090")
+	v.SetDefault("PROMETHEUS_METRICS", []string{"gateway_commands_dropped_total", "gateway_command_latency_seconds_count"})
+	v.SetDefault("PROMETHEUS_POLL_INTERVAL", "30s")
+	v.SetDefault("PROMETHEUS_MQTT_TOPIC", "devices/edge-gateway-sim/messages/events/metrics")
 
 	v.SetEnvPrefix("GATEWAY")
 	v.AutomaticEnv()

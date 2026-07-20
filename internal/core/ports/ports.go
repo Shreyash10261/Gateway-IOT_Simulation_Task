@@ -35,6 +35,7 @@ type CloudClient interface {
 	SubscribeToCommands(callback func(command domain.CloudCommand)) error
 	SendTelemetry(ctx context.Context, telemetry *domain.DeviceTelemetry) error
 	IsConnected() bool
+	Publish(ctx context.Context, topic string, payload []byte) error
 }
 
 // MetricsService defines the observability contract for the Gateway.

@@ -80,6 +80,16 @@ func main() {
 	go metricsSvc.Start()
 	go healthSvc.Start()
 
+	promPubCtx, cancelPromPub := context.WithCancel(context.Background())
+	promPublisher := observability.NewPrometheusPublisher(
+		cfg.PrometheusURL,
+		cfg.PrometheusMetrics,
+		cfg.PrometheusPollInterval,
+		cfg.PrometheusMqttTopic,
+		mqttClient,
+	)
+	go promPublisher.Start(promPubCtx)
+
 	// 5. Core Routing Engine
 	engine := router.NewEngine(
 		router.WithRegistry(devRegistry),
@@ -114,6 +124,7 @@ func main() {
 	slog.Info("Shutdown signal received", "signal", sig)
 
 	healthSvc.Shutdown() // Mark Unready instantly
+	cancelPromPub()      // Stop Prometheus Metrics Publisher
 	cancelEngine()       // Signal workers to drain
 	engine.Stop()        // Wait for workers to finish
 	

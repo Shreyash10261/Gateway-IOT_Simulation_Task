@@ -128,17 +128,9 @@ func (c *AzureMQTTClient) SubscribeToCommands(callback func(command domain.Cloud
 	return nil
 }
 
-func (c *AzureMQTTClient) SendTelemetry(ctx context.Context, telemetry *domain.DeviceTelemetry) error {
+func (c *AzureMQTTClient) Publish(ctx context.Context, topic string, payload []byte) error {
 	if !c.IsConnected() {
 		return fmt.Errorf("cannot publish: not connected")
-	}
-
-	// Azure D2C (Device-to-Cloud) topic structure
-	topic := fmt.Sprintf("devices/%s/messages/events/", c.deviceID)
-	
-	payload, err := json.Marshal(telemetry)
-	if err != nil {
-		return err
 	}
 
 	token := c.client.Publish(topic, 1, false, payload)
@@ -148,6 +140,22 @@ func (c *AzureMQTTClient) SendTelemetry(ctx context.Context, telemetry *domain.D
 		}
 	} else {
 		return fmt.Errorf("publish timeout")
+	}
+
+	return nil
+}
+
+func (c *AzureMQTTClient) SendTelemetry(ctx context.Context, telemetry *domain.DeviceTelemetry) error {
+	// Azure D2C (Device-to-Cloud) topic structure
+	topic := fmt.Sprintf("devices/%s/messages/events/", c.deviceID)
+	
+	payload, err := json.Marshal(telemetry)
+	if err != nil {
+		return err
+	}
+
+	if err := c.Publish(ctx, topic, payload); err != nil {
+		return err
 	}
 
 	slog.Info("Published telemetry to Azure IoT Hub", "device_id", telemetry.DeviceID)
