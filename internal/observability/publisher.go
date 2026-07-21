@@ -25,6 +25,17 @@ type PublishedMetric struct {
 	Timestamp time.Time         `json:"timestamp"`
 }
 
+// metricEvaluator evaluates scraped metric samples (e.g. local alerting rules).
+// Production uses *rules.Engine; tests may inject a no-op to avoid alert side effects.
+type metricEvaluator interface {
+	Evaluate(ctx context.Context, metricName string, value float64, labels map[string]string)
+}
+
+// nopMetricEvaluator is a no-op metricEvaluator for publisher-only tests.
+type nopMetricEvaluator struct{}
+
+func (nopMetricEvaluator) Evaluate(context.Context, string, float64, map[string]string) {}
+
 // PrometheusPublisher scrapes the local Prometheus /metrics endpoint and
 // publishes the configured metrics to the IoT Hub over MQTT.
 type PrometheusPublisher struct {
@@ -34,7 +45,7 @@ type PrometheusPublisher struct {
 	topic         string
 	cloudClient   ports.CloudClient
 	httpClient    *http.Client
-	rulesEngine   *rules.Engine
+	rulesEngine   metricEvaluator
 	logger        *slog.Logger
 }
 
@@ -46,8 +57,27 @@ func NewPrometheusPublisher(
 	cloudClient ports.CloudClient,
 ) *PrometheusPublisher {
 	alertTopic := "devices/edge-gateway-sim/messages/events/alerts" // Can be pulled from config in the future
-	engine := rules.NewEngine(cloudClient, alertTopic)
+	return newPrometheusPublisher(
+		prometheusURL,
+		metrics,
+		interval,
+		topic,
+		cloudClient,
+		rules.NewEngine(cloudClient, alertTopic),
+	)
+}
 
+func newPrometheusPublisher(
+	prometheusURL string,
+	metrics []string,
+	interval time.Duration,
+	topic string,
+	cloudClient ports.CloudClient,
+	evaluator metricEvaluator,
+) *PrometheusPublisher {
+	if evaluator == nil {
+		evaluator = nopMetricEvaluator{}
+	}
 	return &PrometheusPublisher{
 		prometheusURL: prometheusURL,
 		metrics:       metrics,
@@ -55,7 +85,7 @@ func NewPrometheusPublisher(
 		topic:         topic,
 		cloudClient:   cloudClient,
 		httpClient:    &http.Client{Timeout: 10 * time.Second},
-		rulesEngine:   engine,
+		rulesEngine:   evaluator,
 		logger:        slog.Default().With("component", "prometheus_publisher"),
 	}
 }

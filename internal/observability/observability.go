@@ -8,15 +8,36 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/team/edge-gateway/internal/core/domain"
 	"github.com/team/edge-gateway/internal/core/ports"
 )
 
-var (
-	commandLatency = promauto.NewHistogramVec(
+// MetricsService implements ports.MetricsService for Prometheus.
+// Collectors are owned by the service instance and registered on the provided
+// registry (or the Prometheus default registry when constructed via NewMetricsService).
+type MetricsService struct {
+	port            int
+	gatherer        prometheus.Gatherer
+	commandLatency  *prometheus.HistogramVec
+	commandsDropped prometheus.Counter
+}
+
+// NewMetricsService creates a MetricsService that registers collectors on
+// prometheus.DefaultRegisterer and serves them via prometheus.DefaultGatherer.
+func NewMetricsService(port int) *MetricsService {
+	return newMetricsService(port, prometheus.DefaultRegisterer, prometheus.DefaultGatherer)
+}
+
+// NewMetricsServiceWithRegistry creates a MetricsService bound to an isolated
+// registry. Prefer this in tests so collectors do not leak across cases or -count runs.
+func NewMetricsServiceWithRegistry(port int, reg *prometheus.Registry) *MetricsService {
+	return newMetricsService(port, reg, reg)
+}
+
+func newMetricsService(port int, registerer prometheus.Registerer, gatherer prometheus.Gatherer) *MetricsService {
+	commandLatency := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "gateway_command_latency_seconds",
 			Help:    "Latency of command processing in seconds",
@@ -24,31 +45,30 @@ var (
 		},
 		[]string{"protocol", "status"},
 	)
-
-	commandsDropped = promauto.NewCounter(
+	commandsDropped := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "gateway_commands_dropped_total",
 			Help: "Total number of dropped commands due to queue saturation or failures",
 		},
 	)
-)
 
-// MetricsService implements ports.MetricsService for Prometheus.
-type MetricsService struct {
-	port int
-}
+	registerer.MustRegister(commandLatency, commandsDropped)
 
-func NewMetricsService(port int) *MetricsService {
-	return &MetricsService{port: port}
+	return &MetricsService{
+		port:            port,
+		gatherer:        gatherer,
+		commandLatency:  commandLatency,
+		commandsDropped: commandsDropped,
+	}
 }
 
 func (m *MetricsService) RecordCommandLatency(protocol domain.Protocol, status string, latency time.Duration) {
-	commandLatency.WithLabelValues(string(protocol), status).Observe(latency.Seconds())
+	m.commandLatency.WithLabelValues(string(protocol), status).Observe(latency.Seconds())
 	slog.Debug("Metric recorded: command latency", "protocol", protocol, "status", status, "latency", latency)
 }
 
 func (m *MetricsService) RecordCommandDropped() {
-	commandsDropped.Inc()
+	m.commandsDropped.Inc()
 	slog.Debug("Metric recorded: command dropped")
 }
 
@@ -56,7 +76,7 @@ func (m *MetricsService) Start() {
 	slog.Info("Starting Prometheus Metrics Server", "port", m.port)
 
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", promhttp.HandlerFor(m.gatherer, promhttp.HandlerOpts{}))
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", m.port), mux); err != nil {
 		slog.Error("Metrics server crashed", "err", err)

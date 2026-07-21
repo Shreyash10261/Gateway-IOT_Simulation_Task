@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/team/edge-gateway/internal/core/domain"
+	"github.com/team/edge-gateway/internal/core/rules"
 )
 
 type mockCloudClient struct {
@@ -21,8 +22,8 @@ type publishedMessage struct {
 	payload []byte
 }
 
-func (m *mockCloudClient) Connect() error                            { return nil }
-func (m *mockCloudClient) Disconnect() error                         { return nil }
+func (m *mockCloudClient) Connect() error    { return nil }
+func (m *mockCloudClient) Disconnect() error { return nil }
 func (m *mockCloudClient) SubscribeToCommands(callback func(command domain.CloudCommand)) error {
 	return nil
 }
@@ -38,7 +39,20 @@ func (m *mockCloudClient) Publish(ctx context.Context, topic string, payload []b
 	return nil
 }
 
-// metricsResponse builds a Prometheus text exposition response for testing.
+const alertTopic = "devices/edge-gateway-sim/messages/events/alerts"
+
+// newTestPublisher builds a publisher with a no-op rules evaluator so publisher
+// unit tests only exercise scrape/publish behavior (no alert side effects).
+func newTestPublisher(
+	prometheusURL string,
+	metrics []string,
+	interval time.Duration,
+	topic string,
+	cloudClient *mockCloudClient,
+) *PrometheusPublisher {
+	return newPrometheusPublisher(prometheusURL, metrics, interval, topic, cloudClient, nopMetricEvaluator{})
+}
+
 const counterOnlyResponse = `# HELP gateway_commands_dropped_total Total number of dropped commands due to queue saturation or failures
 # TYPE gateway_commands_dropped_total counter
 gateway_commands_dropped_total 42
@@ -78,7 +92,7 @@ func TestPublishMetrics_CounterSuccess(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(server.URL, []string{"gateway_commands_dropped_total"}, 1*time.Second, "test/topic", mockClient)
+	publisher := newTestPublisher(server.URL, []string{"gateway_commands_dropped_total"}, 1*time.Second, "test/topic", mockClient)
 
 	publisher.publishMetrics(context.Background())
 
@@ -107,6 +121,60 @@ func TestPublishMetrics_CounterSuccess(t *testing.T) {
 	}
 }
 
+func TestPublishMetrics_RulesEngineAlertOnThresholdBreach(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(counterOnlyResponse))
+	}))
+	defer server.Close()
+
+	mockClient := &mockCloudClient{}
+	publisher := newPrometheusPublisher(
+		server.URL,
+		[]string{"gateway_commands_dropped_total"},
+		1*time.Second,
+		"test/topic",
+		mockClient,
+		rules.NewEngine(mockClient, alertTopic),
+	)
+
+	publisher.publishMetrics(context.Background())
+
+	if len(mockClient.publishedData) != 2 {
+		t.Fatalf("expected metric + alert publishes, got %d", len(mockClient.publishedData))
+	}
+
+	var sawMetric, sawAlert bool
+	for _, msg := range mockClient.publishedData {
+		switch msg.topic {
+		case "test/topic":
+			sawMetric = true
+			var pm PublishedMetric
+			if err := json.Unmarshal(msg.payload, &pm); err != nil {
+				t.Fatalf("failed to unmarshal metric payload: %v", err)
+			}
+			if pm.Metric != "gateway_commands_dropped_total" || pm.Value != 42.0 {
+				t.Errorf("unexpected metric payload: %+v", pm)
+			}
+		case alertTopic:
+			sawAlert = true
+			var alert domain.AlertPayload
+			if err := json.Unmarshal(msg.payload, &alert); err != nil {
+				t.Fatalf("failed to unmarshal alert payload: %v", err)
+			}
+			if alert.MetricName != "gateway_commands_dropped_total" || alert.Severity != "CRITICAL" {
+				t.Errorf("unexpected alert: metric=%s severity=%s", alert.MetricName, alert.Severity)
+			}
+		default:
+			t.Errorf("unexpected topic %q", msg.topic)
+		}
+	}
+	if !sawMetric || !sawAlert {
+		t.Fatalf("missing publishes: metric=%v alert=%v", sawMetric, sawAlert)
+	}
+}
+
 func TestPublishMetrics_HistogramCountExtraction(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
@@ -116,7 +184,7 @@ func TestPublishMetrics_HistogramCountExtraction(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		server.URL,
 		[]string{"gateway_command_latency_seconds_count"},
 		1*time.Second,
@@ -131,7 +199,6 @@ func TestPublishMetrics_HistogramCountExtraction(t *testing.T) {
 		t.Fatalf("expected 2 published messages (one per label set), got %d", len(mockClient.publishedData))
 	}
 
-	// Verify we can decode both and check values/labels
 	type result struct {
 		pm PublishedMetric
 	}
@@ -144,7 +211,6 @@ func TestPublishMetrics_HistogramCountExtraction(t *testing.T) {
 		results = append(results, result{pm: pm})
 	}
 
-	// Find the SUCCESS and ERROR entries
 	var foundSuccess, foundError bool
 	for _, r := range results {
 		if r.pm.Metric != "gateway_command_latency_seconds_count" {
@@ -188,7 +254,7 @@ func TestPublishMetrics_MetricNotFound(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		server.URL,
 		[]string{"nonexistent_metric_total"},
 		1*time.Second,
@@ -198,7 +264,6 @@ func TestPublishMetrics_MetricNotFound(t *testing.T) {
 
 	publisher.publishMetrics(context.Background())
 
-	// Should not publish anything, and should not error (just debug log)
 	if len(mockClient.publishedData) != 0 {
 		t.Errorf("expected 0 published messages for missing metric, got %d", len(mockClient.publishedData))
 	}
@@ -206,7 +271,7 @@ func TestPublishMetrics_MetricNotFound(t *testing.T) {
 
 func TestPublishMetrics_UnreachableEndpoint(t *testing.T) {
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		"http://localhost:1", // unreachable port
 		[]string{"gateway_commands_dropped_total"},
 		1*time.Second,
@@ -214,7 +279,6 @@ func TestPublishMetrics_UnreachableEndpoint(t *testing.T) {
 		mockClient,
 	)
 
-	// Should not panic, just log the error internally
 	publisher.publishMetrics(context.Background())
 
 	if len(mockClient.publishedData) != 0 {
@@ -230,7 +294,7 @@ func TestPublishMetrics_HttpServerError(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		server.URL,
 		[]string{"gateway_commands_dropped_total"},
 		1*time.Second,
@@ -254,7 +318,7 @@ func TestPublishMetrics_CombinedCounterAndHistogram(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		server.URL,
 		[]string{"gateway_commands_dropped_total", "gateway_command_latency_seconds_count"},
 		1*time.Second,
@@ -279,7 +343,7 @@ func TestPublishMetrics_StartStop(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		server.URL,
 		[]string{"gateway_commands_dropped_total"},
 		50*time.Millisecond,
@@ -295,13 +359,11 @@ func TestPublishMetrics_StartStop(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait a bit to verify ticker works
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 
 	select {
 	case <-done:
-		// success — publisher exited on context cancellation
 	case <-time.After(1 * time.Second):
 		t.Fatal("publisher Start did not terminate on context cancellation")
 	}
@@ -316,7 +378,7 @@ func TestPublishMetrics_MalformedExpositionBody(t *testing.T) {
 	defer server.Close()
 
 	mockClient := &mockCloudClient{}
-	publisher := NewPrometheusPublisher(
+	publisher := newTestPublisher(
 		server.URL,
 		[]string{"gateway_commands_dropped_total"},
 		1*time.Second,
