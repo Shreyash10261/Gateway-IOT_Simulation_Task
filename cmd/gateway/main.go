@@ -110,6 +110,17 @@ func main() {
 	engineCtx, cancelEngine := context.WithCancel(context.Background())
 	engine.Start(engineCtx)
 
+	// Start Telemetry Pollers for PJLink devices
+	if devs, err := devRegistry.ListDevices(context.Background()); err == nil {
+		for _, dev := range devs {
+			if dev.Protocol == domain.ProtocolPJLink {
+				go func(d *domain.Device) {
+					_ = tcpComm.ListenTelemetry(engineCtx, d, nil)
+				}(dev)
+			}
+		}
+	}
+
 	// 7. Connect to Cloud and Bind Topics (Background reconnect loop handles failures)
 	if err := mqttClient.Connect(); err != nil {
 		slog.Warn("Failed to connect to Azure IoT on startup; background reconnect active", "err", err)

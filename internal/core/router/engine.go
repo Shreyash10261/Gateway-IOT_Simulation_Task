@@ -133,16 +133,16 @@ func (e *Engine) processCommand(ctx context.Context, cmd domain.CloudCommand, ba
 		return
 	}
 
-	respPayload, err := e.executeWithRetry(ctx, dev, rawPayload, log)
-	
+	rawTelemetry, chainErr := e.executeCommandChain(ctx, dev, adapter, cmd, rawPayload, log)
+
 	// Record metrics and update state regardless of success/failure
 	latency := time.Since(start)
 	status := "SUCCESS"
-	
-	if err != nil {
+
+	if chainErr != nil {
 		status = "ERROR"
-		log.Error("Southbound dispatch failed permanently", "err", err)
-		
+		log.Error("Southbound dispatch failed permanently", "err", chainErr)
+
 		// Update registry state to Offline
 		dev.Status = domain.StatusOffline
 		dev.LastSeen = time.Now()
@@ -158,14 +158,8 @@ func (e *Engine) processCommand(ctx context.Context, cmd domain.CloudCommand, ba
 		e.metrics.RecordCommandLatency(dev.Protocol, status, latency)
 	}
 
-	if err != nil {
+	if chainErr != nil {
 		return // Do not send telemetry if network failed completely
-	}
-
-	rawTelemetry, err := adapter.ParseTelemetry(respPayload)
-	if err != nil {
-		log.Error("Failed to parse telemetry", "err", err)
-		return
 	}
 
 	telemetry := &domain.DeviceTelemetry{
@@ -176,6 +170,56 @@ func (e *Engine) processCommand(ctx context.Context, cmd domain.CloudCommand, ba
 	}
 	
 	e.publishTelemetryWithRetry(ctx, telemetry, log)
+}
+
+func (e *Engine) executeCommandChain(
+	ctx context.Context,
+	dev *domain.Device,
+	adapter ports.ProtocolAdapter,
+	cmd domain.CloudCommand,
+	primaryPayload []byte,
+	log *slog.Logger,
+) (map[string]interface{}, error) {
+	primaryResp, err := e.executeWithRetry(ctx, dev, primaryPayload, log)
+	if err != nil {
+		return nil, err
+	}
+
+	telemetry, err := adapter.ParseTelemetry(primaryResp)
+	if err != nil {
+		return nil, err
+	}
+
+	chainAdapter, ok := adapter.(ports.CommandChainAdapter)
+	if !ok {
+		return telemetry, nil
+	}
+
+	followUps, err := chainAdapter.FollowUpCommands(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, payload := range followUps {
+		followUpResp, err := e.executeWithRetry(ctx, dev, payload, log)
+		if err != nil {
+			return nil, err
+		}
+
+		extra, err := adapter.ParseTelemetry(followUpResp)
+		if err != nil {
+			return nil, err
+		}
+		mergeTelemetry(telemetry, extra)
+	}
+
+	return telemetry, nil
+}
+
+func mergeTelemetry(base, extra map[string]interface{}) {
+	for key, value := range extra {
+		base[key] = value
+	}
 }
 
 func (e *Engine) executeWithRetry(ctx context.Context, dev *domain.Device, payload []byte, log *slog.Logger) ([]byte, error) {

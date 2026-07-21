@@ -11,11 +11,12 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates curl iproute2 tcpdump iptables iputils-ping
 WORKDIR /app
 
-# Copy the Pre-built binary file from the previous stage
 COPY --from=builder /build/gateway .
+COPY entrypoint.sh .
 
-# Expose the Health and Metrics ports
+RUN chmod +x ./entrypoint.sh
+
 EXPOSE 8085 9090
 
-# Command to run the executable
-ENTRYPOINT ["./gateway"]
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["./gateway"]

@@ -25,6 +25,13 @@ type ProtocolAdapter interface {
 	ParseTelemetry(raw []byte) (map[string]interface{}, error)
 }
 
+// CommandChainAdapter optionally exposes follow-up southbound commands
+// (e.g. GET_STATUS → POWR then LAMP on PJLink devices).
+type CommandChainAdapter interface {
+	ProtocolAdapter
+	FollowUpCommands(cmd domain.CloudCommand) ([][]byte, error)
+}
+
 type AdapterFactory interface {
 	GetAdapter(protocol domain.Protocol) (ProtocolAdapter, error)
 }
