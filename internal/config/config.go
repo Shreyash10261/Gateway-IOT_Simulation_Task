@@ -26,6 +26,9 @@ type Config struct {
 	PrometheusMetrics      []string      `mapstructure:"PROMETHEUS_METRICS"`
 	PrometheusPollInterval time.Duration `mapstructure:"PROMETHEUS_POLL_INTERVAL"`
 	PrometheusMqttTopic    string        `mapstructure:"PROMETHEUS_MQTT_TOPIC"`
+	RetentionWindowMinutes int           `mapstructure:"RETENTION_WINDOW_MINUTES"`
+	FetchEndpointPath      string        `mapstructure:"FETCH_ENDPOINT_PATH"`
+	SQLiteDBPath           string        `mapstructure:"SQLITE_DB_PATH"`
 }
 
 func Load() (*Config, error) {
@@ -44,6 +47,9 @@ func Load() (*Config, error) {
 	v.SetDefault("PROMETHEUS_METRICS", []string{"gateway_commands_dropped_total", "gateway_command_latency_seconds_count"})
 	v.SetDefault("PROMETHEUS_POLL_INTERVAL", "30s")
 	v.SetDefault("PROMETHEUS_MQTT_TOPIC", "devices/edge-gateway-sim/messages/events/metrics")
+	v.SetDefault("RETENTION_WINDOW_MINUTES", 1) // this is the minuties that the telemetry should be stored in the SQLite buffer
+	v.SetDefault("FETCH_ENDPOINT_PATH", "/api/v1/backend/fetch")
+	v.SetDefault("SQLITE_DB_PATH", "/tmp/gateway_buffer.db")
 
 	v.SetEnvPrefix("GATEWAY")
 	v.AutomaticEnv()

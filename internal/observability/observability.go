@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/team/edge-gateway/internal/buffer"
 	"github.com/team/edge-gateway/internal/core/domain"
 	"github.com/team/edge-gateway/internal/core/ports"
 )
@@ -85,18 +87,22 @@ func (m *MetricsService) Start() {
 
 // HealthService exposes Kubernetes-compatible liveness and readiness endpoints.
 type HealthService struct {
-	port         int
-	cloudClient  ports.CloudClient
-	registry     ports.DeviceRegistry
-	mu           sync.RWMutex
-	shuttingDown bool
+	port          int
+	cloudClient   ports.CloudClient
+	registry      ports.DeviceRegistry
+	buffer        buffer.Buffer
+	fetchEndpoint string
+	mu            sync.RWMutex
+	shuttingDown  bool
 }
 
-func NewHealthService(port int, cloud ports.CloudClient, registry ports.DeviceRegistry) *HealthService {
+func NewHealthService(port int, cloud ports.CloudClient, registry ports.DeviceRegistry, buf buffer.Buffer, fetchEndpoint string) *HealthService {
 	return &HealthService{
-		port:        port,
-		cloudClient: cloud,
-		registry:    registry,
+		port:          port,
+		cloudClient:   cloud,
+		registry:      registry,
+		buffer:        buf,
+		fetchEndpoint: fetchEndpoint,
 	}
 }
 
@@ -126,9 +132,42 @@ func (h *HealthService) Start() {
 		w.Write([]byte("Ready"))
 	})
 
+	if h.fetchEndpoint != "" {
+		mux.HandleFunc(h.fetchEndpoint, h.handleFetch)
+	}
+
 	slog.Info("Starting Health Server", "port", h.port)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", h.port), mux); err != nil {
 		slog.Error("Health server crashed", "err", err)
+	}
+}
+
+func (h *HealthService) handleFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var items []buffer.BufferedItem
+	var err error
+	
+	if h.buffer != nil {
+		items, err = h.buffer.Fetch()
+		if err != nil {
+			slog.Error("Failed to fetch buffer", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		items = []buffer.BufferedItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		slog.Error("Failed to encode fetch response", "err", err)
+	} else {
+		slog.Info("Served fetch request", "records", len(items))
 	}
 }
 

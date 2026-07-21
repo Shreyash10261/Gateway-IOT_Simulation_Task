@@ -13,6 +13,7 @@ import (
 	"github.com/team/edge-gateway/internal/adapters/protocols"
 	"github.com/team/edge-gateway/internal/adapters/registry"
 	"github.com/team/edge-gateway/internal/adapters/southbound"
+	"github.com/team/edge-gateway/internal/buffer"
 	"github.com/team/edge-gateway/internal/config"
 	"github.com/team/edge-gateway/internal/core/domain"
 	"github.com/team/edge-gateway/internal/core/router"
@@ -73,9 +74,23 @@ func main() {
 	// 3. Adapters (Northbound)
 	mqttClient := cloud.NewAzureMQTTClient(cfg.IotHubHostname, nil)
 
+	// 3.5 Buffer Initialization
+	var sqliteBuffer buffer.Buffer
+	if cfg.SQLiteDBPath != "" {
+		buf, err := buffer.NewSQLiteBuffer(cfg.SQLiteDBPath)
+		if err != nil {
+			slog.Error("Failed to initialize SQLite buffer", "err", err)
+			os.Exit(1)
+		}
+		
+		retention := time.Duration(cfg.RetentionWindowMinutes) * time.Minute
+		buf.StartCleanup(context.Background(), retention)
+		sqliteBuffer = buf
+	}
+
 	// 4. Observability
 	metricsSvc := observability.NewMetricsService(cfg.MetricsPort)
-	healthSvc := observability.NewHealthService(cfg.HealthPort, mqttClient, devRegistry)
+	healthSvc := observability.NewHealthService(cfg.HealthPort, mqttClient, devRegistry, sqliteBuffer, cfg.FetchEndpointPath)
 	
 	go metricsSvc.Start()
 	go healthSvc.Start()
@@ -97,6 +112,7 @@ func main() {
 		router.WithTCP(tcpComm),
 		router.WithAdapters(adapterFactory),
 		router.WithMetrics(metricsSvc),
+		router.WithBuffer(sqliteBuffer),
 		router.WithTimeout(time.Duration(cfg.NetworkTimeout)*time.Millisecond),
 		router.WithWorkerPoolSize(cfg.WorkerPoolSize),
 		router.WithCommandQueueSize(cfg.CommandQueueSize),
@@ -111,11 +127,29 @@ func main() {
 	engine.Start(engineCtx)
 
 	// Start Telemetry Pollers for PJLink devices
+	telemetryChan := make(chan *domain.DeviceTelemetry, 100)
+	
+	// Background worker to buffer periodic telemetry
+	go func() {
+		for {
+			select {
+			case <-engineCtx.Done():
+				return
+			case t := <-telemetryChan:
+				if sqliteBuffer != nil {
+					if err := sqliteBuffer.AddData("telemetry", t); err != nil {
+						slog.Error("Failed to buffer periodic telemetry", "err", err)
+					}
+				}
+			}
+		}
+	}()
+
 	if devs, err := devRegistry.ListDevices(context.Background()); err == nil {
 		for _, dev := range devs {
 			if dev.Protocol == domain.ProtocolPJLink {
 				go func(d *domain.Device) {
-					_ = tcpComm.ListenTelemetry(engineCtx, d, nil)
+					_ = tcpComm.ListenTelemetry(engineCtx, d, telemetryChan)
 				}(dev)
 			}
 		}
@@ -138,6 +172,10 @@ func main() {
 	cancelPromPub()      // Stop Prometheus Metrics Publisher
 	cancelEngine()       // Signal workers to drain
 	engine.Stop()        // Wait for workers to finish
+	
+	if sqliteBuffer != nil {
+		sqliteBuffer.Close()
+	}
 	
 	// Gracefully flush pending MQTT acks/telemetry before shutting down TCP socket
 	_ = mqttClient.Disconnect()

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/team/edge-gateway/internal/buffer"
 	"github.com/team/edge-gateway/internal/core/domain"
 	coreErrors "github.com/team/edge-gateway/internal/core/errors"
 	"github.com/team/edge-gateway/internal/core/ports"
@@ -35,6 +36,7 @@ type Engine struct {
 	tcpComm        ports.DeviceCommunicator
 	adapters       ports.AdapterFactory
 	metrics        ports.MetricsService
+	buffer         buffer.Buffer
 	
 	cmdChan        chan domain.CloudCommand
 	workerPool     int
@@ -52,6 +54,7 @@ func WithCloud(c ports.CloudClient) Option       { return func(e *Engine) { e.cl
 func WithTCP(t ports.DeviceCommunicator) Option  { return func(e *Engine) { e.tcpComm = t } }
 func WithAdapters(a ports.AdapterFactory) Option { return func(e *Engine) { e.adapters = a } }
 func WithMetrics(m ports.MetricsService) Option  { return func(e *Engine) { e.metrics = m } }
+func WithBuffer(b buffer.Buffer) Option          { return func(e *Engine) { e.buffer = b } }
 func WithTimeout(d time.Duration) Option         { return func(e *Engine) { e.networkTimeout = d } }
 
 func WithWorkerPoolSize(s int) Option            { return func(e *Engine) { e.workerPool = s } }
@@ -167,6 +170,12 @@ func (e *Engine) processCommand(ctx context.Context, cmd domain.CloudCommand, ba
 		DeviceID:      dev.ID,
 		Timestamp:     time.Now(),
 		Data:          rawTelemetry,
+	}
+	
+	if e.buffer != nil {
+		if err := e.buffer.AddData("telemetry", telemetry); err != nil {
+			log.Error("Failed to buffer telemetry", "err", err)
+		}
 	}
 	
 	e.publishTelemetryWithRetry(ctx, telemetry, log)

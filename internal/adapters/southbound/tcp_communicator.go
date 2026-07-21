@@ -124,12 +124,12 @@ func readUntilCR(r io.Reader, maxBytes int) ([]byte, error) {
 
 func (c *TCPCommunicator) ListenTelemetry(ctx context.Context, dev *domain.Device, telemetryChan chan<- *domain.DeviceTelemetry) error {
 	if dev.Protocol == domain.ProtocolPJLink {
-		return c.pollPJLinkTelemetry(ctx, dev)
+		return c.pollPJLinkTelemetry(ctx, dev, telemetryChan)
 	}
 	return fmt.Errorf("streaming telemetry not supported over raw TCP in MVP")
 }
 
-func (c *TCPCommunicator) pollPJLinkTelemetry(ctx context.Context, dev *domain.Device) error {
+func (c *TCPCommunicator) pollPJLinkTelemetry(ctx context.Context, dev *domain.Device, telemetryChan chan<- *domain.DeviceTelemetry) error {
 	address := fmt.Sprintf("%s:%d", dev.IP, dev.Port)
 	log := slog.With("device", dev.ID, "address", address)
 	adapter := protocols.NewPJLinkAdapter()
@@ -156,7 +156,7 @@ func (c *TCPCommunicator) pollPJLinkTelemetry(ctx context.Context, dev *domain.D
 			continue
 		}
 
-		err = c.runPJLinkSession(ctx, conn, log, adapter, ticker)
+		err = c.runPJLinkSession(ctx, conn, log, adapter, ticker, dev, telemetryChan)
 		conn.Close()
 
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -170,7 +170,7 @@ func (c *TCPCommunicator) pollPJLinkTelemetry(ctx context.Context, dev *domain.D
 	}
 }
 
-func (c *TCPCommunicator) runPJLinkSession(ctx context.Context, conn net.Conn, log *slog.Logger, adapter *protocols.PJLinkAdapter, ticker *time.Ticker) error {
+func (c *TCPCommunicator) runPJLinkSession(ctx context.Context, conn net.Conn, log *slog.Logger, adapter *protocols.PJLinkAdapter, ticker *time.Ticker, dev *domain.Device, telemetryChan chan<- *domain.DeviceTelemetry) error {
 	if err := conn.SetReadDeadline(time.Now().Add(c.defaultTimeout)); err != nil {
 		return err
 	}
@@ -244,6 +244,35 @@ func (c *TCPCommunicator) runPJLinkSession(ctx context.Context, conn net.Conn, l
 				log.Warn("Received device telemetry with errors", logArgs...)
 			} else {
 				log.Info("Received device telemetry", logArgs...)
+			}
+			
+			if telemetryChan != nil {
+				telemetryData := map[string]interface{}{}
+				if errLamp == nil {
+					for k, v := range parsedLamp {
+						telemetryData[k] = v
+					}
+				}
+				if errPowr == nil {
+					for k, v := range parsedPowr {
+						telemetryData[k] = v
+					}
+				}
+				
+				t := &domain.DeviceTelemetry{
+					CorrelationID: fmt.Sprintf("poll-%d", time.Now().UnixNano()),
+					DeviceID:      dev.ID,
+					Timestamp:     time.Now().UTC(),
+					Data:          telemetryData,
+				}
+				
+				select {
+				case telemetryChan <- t:
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					log.Warn("telemetryChan full, dropping telemetry")
+				}
 			}
 		}
 	}
