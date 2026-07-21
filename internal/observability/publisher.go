@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/team/edge-gateway/internal/core/ports"
+	"github.com/team/edge-gateway/internal/core/rules"
 )
 
 // PublishedMetric is the JSON payload published to the IoT Hub for each metric series.
@@ -33,6 +34,7 @@ type PrometheusPublisher struct {
 	topic         string
 	cloudClient   ports.CloudClient
 	httpClient    *http.Client
+	rulesEngine   *rules.Engine
 	logger        *slog.Logger
 }
 
@@ -43,6 +45,9 @@ func NewPrometheusPublisher(
 	topic string,
 	cloudClient ports.CloudClient,
 ) *PrometheusPublisher {
+	alertTopic := "devices/edge-gateway-sim/messages/events/alerts" // Can be pulled from config in the future
+	engine := rules.NewEngine(cloudClient, alertTopic)
+
 	return &PrometheusPublisher{
 		prometheusURL: prometheusURL,
 		metrics:       metrics,
@@ -50,6 +55,7 @@ func NewPrometheusPublisher(
 		topic:         topic,
 		cloudClient:   cloudClient,
 		httpClient:    &http.Client{Timeout: 10 * time.Second},
+		rulesEngine:   engine,
 		logger:        slog.Default().With("component", "prometheus_publisher"),
 	}
 }
@@ -256,6 +262,9 @@ func (p *PrometheusPublisher) publishFamily(
 			Timestamp: now,
 		}
 
+		// Evaluate metric against local rules engine
+		p.rulesEngine.Evaluate(ctx, metricName, value, labels)
+
 		if err := p.publishPayload(ctx, payload); err != nil {
 			return true, err
 		}
@@ -295,6 +304,9 @@ func (p *PrometheusPublisher) publishDerivedField(
 			Labels:    labels,
 			Timestamp: now,
 		}
+
+		// Evaluate metric against local rules engine
+		p.rulesEngine.Evaluate(ctx, metricName, value, labels)
 
 		if err := p.publishPayload(ctx, payload); err != nil {
 			return true, err

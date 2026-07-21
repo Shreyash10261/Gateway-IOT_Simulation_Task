@@ -59,3 +59,13 @@ type DeviceTelemetry struct {
 	Timestamp     time.Time              `json:"timestamp"`
 	Data          map[string]interface{} `json:"data"`
 }
+
+type AlertPayload struct {
+	Severity   string            `json:"severity"`
+	Message    string            `json:"message"`
+	MetricName string            `json:"metric_name"`
+	Value      float64           `json:"value"`
+	Threshold  float64           `json:"threshold"`
+	Labels     map[string]string `json:"labels"`
+	Timestamp  time.Time         `json:"timestamp"`
+}
