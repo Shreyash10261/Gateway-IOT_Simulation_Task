@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -145,9 +146,10 @@ func main() {
 		}
 	}()
 
-	// 6.5 Dynamic Telemetry Poller Spawner
+	// 6.5 Direct VDR Telemetry Pass-through
+	// The user requested a dumb pass-through: we take the telemetry provided directly by the VDR API
+	// (which static_json_registry now stores in dev.Telemetry) and shove it directly into the buffer, bypassing TCP polling.
 	go func() {
-		activePollers := make(map[string]bool)
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -161,19 +163,22 @@ func main() {
 					continue
 				}
 				for _, dev := range devs {
-					if dev.Protocol == domain.ProtocolPJLink {
-						if !activePollers[dev.ID] {
-							activePollers[dev.ID] = true
-							slog.Info("Spawning new telemetry poller for device", "device", dev.ID, "protocol", dev.Protocol)
-							go func(d *domain.Device) {
-								_ = tcpComm.ListenTelemetry(engineCtx, d, telemetryChan)
-							}(dev)
+					// Only push telemetry if the VDR actually provided some
+					if len(dev.Telemetry) > 0 {
+						t := &domain.DeviceTelemetry{
+							CorrelationID: fmt.Sprintf("vdr-pass-%d", time.Now().UnixNano()),
+							DeviceID:      dev.ID,
+							Timestamp:     time.Now().UTC(),
+							Data:          dev.Telemetry,
 						}
-					} else {
-						// Log unhandled protocols so we can debug why it skipped them
-						if !activePollers[dev.ID] {
-							slog.Info("Discovered device in registry but protocol is not PJLink", "device", dev.ID, "protocol", dev.Protocol)
-							activePollers[dev.ID] = true // Mark as seen so we don't spam the logs
+						
+						select {
+						case telemetryChan <- t:
+							// Successfully queued for the buffer
+						case <-engineCtx.Done():
+							return
+						default:
+							slog.Warn("telemetryChan full, dropping VDR telemetry")
 						}
 					}
 				}

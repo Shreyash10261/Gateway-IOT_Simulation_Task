@@ -187,19 +187,7 @@ func validateDevice(dev *domain.Device) error {
 		return fmt.Errorf("invalid port: %d", dev.Port)
 	}
 	
-	// Normalize protocol string to match exactly what the gateway expects
-	switch strings.ToUpper(string(dev.Protocol)) {
-	case strings.ToUpper(string(domain.ProtocolPJLink)):
-		dev.Protocol = domain.ProtocolPJLink
-	case strings.ToUpper(string(domain.ProtocolONVIF)):
-		dev.Protocol = domain.ProtocolONVIF
-	case strings.ToUpper(string(domain.ProtocolISAPI)):
-		dev.Protocol = domain.ProtocolISAPI
-	case strings.ToUpper(string(domain.ProtocolShure)):
-		dev.Protocol = domain.ProtocolShure
-	default:
-		return coreErrors.ErrUnsupportedProtocol
-	}
+	// Accept any protocol string as-is since we just want to pass data through
 	
 	return nil
 }

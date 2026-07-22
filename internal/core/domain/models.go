@@ -43,6 +43,7 @@ type Device struct {
 	Metadata     map[string]string `json:"metadata"`
 	Status       Status            `json:"status"`
 	LastSeen     time.Time         `json:"last_seen"`
+	Telemetry    map[string]interface{} `json:"telemetry"`
 }
 
 type CloudCommand struct {
