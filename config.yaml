@@ -1,7 +1,7 @@
 LOG_LEVEL: "debug"
 METRICS_PORT: 9090
 HEALTH_PORT: 8085
-REGISTRY_PATH: "http://golang_vdr_service:8080/devices"
+REGISTRY_PATH: "http://192.168.1.224:8080/devices"
 NETWORK_TIMEOUT_MS: 5000
 IOT_HUB_HOSTNAME: "AV-IOT-HUB.azure-devices.net"
 CERT_PATH: "./cert.pem"
