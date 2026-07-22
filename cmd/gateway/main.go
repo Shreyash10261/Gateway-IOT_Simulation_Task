@@ -157,16 +157,23 @@ func main() {
 			case <-ticker.C:
 				devs, err := devRegistry.ListDevices(engineCtx)
 				if err != nil {
+					slog.Error("Failed to list devices from registry in poller loop", "err", err)
 					continue
 				}
 				for _, dev := range devs {
 					if dev.Protocol == domain.ProtocolPJLink {
 						if !activePollers[dev.ID] {
 							activePollers[dev.ID] = true
-							slog.Info("Spawning new telemetry poller for device", "device", dev.ID)
+							slog.Info("Spawning new telemetry poller for device", "device", dev.ID, "protocol", dev.Protocol)
 							go func(d *domain.Device) {
 								_ = tcpComm.ListenTelemetry(engineCtx, d, telemetryChan)
 							}(dev)
+						}
+					} else {
+						// Log unhandled protocols so we can debug why it skipped them
+						if !activePollers[dev.ID] {
+							slog.Info("Discovered device in registry but protocol is not PJLink", "device", dev.ID, "protocol", dev.Protocol)
+							activePollers[dev.ID] = true // Mark as seen so we don't spam the logs
 						}
 					}
 				}
