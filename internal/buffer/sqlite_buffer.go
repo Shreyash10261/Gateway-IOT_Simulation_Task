@@ -35,7 +35,7 @@ func NewSQLiteBuffer(dbPath string) (*SQLiteBuffer, error) {
 		return nil, fmt.Errorf("failed to create directory for database: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
