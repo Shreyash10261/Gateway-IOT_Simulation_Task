@@ -4,8 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"time"
+	"log/slog"
 
 	"github.com/team/edge-gateway/internal/core/domain"
 	coreErrors "github.com/team/edge-gateway/internal/core/errors"
@@ -17,7 +22,7 @@ type staticJSONRegistry struct {
 	path    string
 }
 
-// NewStaticJSONRegistry creates a registry that loads from a JSON file.
+// NewStaticJSONRegistry creates a registry that loads from a JSON file or HTTP endpoint.
 func NewStaticJSONRegistry(path string) *staticJSONRegistry {
 	return &staticJSONRegistry{
 		devices: make(map[string]*domain.Device),
@@ -25,33 +30,80 @@ func NewStaticJSONRegistry(path string) *staticJSONRegistry {
 	}
 }
 
-// Load populates the registry from the configured JSON file path, with validation.
+// Load populates the registry from the configured path, with validation.
 func (r *staticJSONRegistry) Load(ctx context.Context) error {
-	file, err := os.Open(r.path)
-	if err != nil {
-		return fmt.Errorf("failed to open registry file: %w", err)
+	if err := r.loadOnce(); err != nil {
+		return err
 	}
-	defer file.Close()
+	if strings.HasPrefix(r.path, "http://") || strings.HasPrefix(r.path, "https://") {
+		go r.poll(ctx)
+	}
+	return nil
+}
+
+func (r *staticJSONRegistry) poll(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := r.loadOnce(); err != nil {
+				slog.Warn("Failed to poll dynamic registry", "err", err)
+			}
+		}
+	}
+}
+
+func (r *staticJSONRegistry) loadOnce() error {
+	var body io.ReadCloser
+	if strings.HasPrefix(r.path, "http://") || strings.HasPrefix(r.path, "https://") {
+		resp, err := http.Get(r.path)
+		if err != nil {
+			return fmt.Errorf("failed to fetch registry: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return fmt.Errorf("bad status fetching registry: %d", resp.StatusCode)
+		}
+		body = resp.Body
+	} else {
+		var err error
+		body, err = os.Open(r.path)
+		if err != nil {
+			return fmt.Errorf("failed to open registry file: %w", err)
+		}
+	}
+	defer body.Close()
 
 	var deviceList []*domain.Device
-	if err := json.NewDecoder(file).Decode(&deviceList); err != nil {
+	if err := json.NewDecoder(body).Decode(&deviceList); err != nil {
 		return fmt.Errorf("failed to decode registry JSON: %w", err)
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	
+	newDevices := make(map[string]*domain.Device)
 	for _, dev := range deviceList {
 		if err := validateDevice(dev); err != nil {
-			return fmt.Errorf("invalid device %s: %w", dev.ID, err)
+			slog.Warn("Skipping invalid device", "id", dev.ID, "err", err)
+			continue
 		}
-		if _, exists := r.devices[dev.ID]; exists {
-			return fmt.Errorf("duplicate device ID found during load: %s", dev.ID)
+		
+		// Preserve runtime state if device already exists
+		if existing, exists := r.devices[dev.ID]; exists {
+			dev.Status = existing.Status
+			dev.LastSeen = existing.LastSeen
+			dev.Metadata = existing.Metadata
+		} else {
+			dev.Status = domain.StatusUnknown
 		}
-
-		// Initialize runtime state (LastSeen remains zero-value/unset until contact)
-		dev.Status = domain.StatusUnknown
-		r.devices[dev.ID] = dev
+		newDevices[dev.ID] = dev
 	}
+	
+	r.devices = newDevices
 	return nil
 }
 
