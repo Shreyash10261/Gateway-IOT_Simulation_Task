@@ -3,6 +3,7 @@ package cloud
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -35,9 +36,16 @@ func (c *AzureMQTTClient) Connect() error {
 	if err != nil {
 		return fmt.Errorf("could not load x509 key pair: %w", err)
 	}
-	
+
+	// System Root CAs are required so Azure IoT Hub's server cert verifies (mTLS).
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil || rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
+		RootCAs:      rootCAs,
 		MinVersion:   tls.VersionTLS12,
 	}
 
