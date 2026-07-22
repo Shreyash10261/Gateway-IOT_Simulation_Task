@@ -145,15 +145,34 @@ func main() {
 		}
 	}()
 
-	if devs, err := devRegistry.ListDevices(context.Background()); err == nil {
-		for _, dev := range devs {
-			if dev.Protocol == domain.ProtocolPJLink {
-				go func(d *domain.Device) {
-					_ = tcpComm.ListenTelemetry(engineCtx, d, telemetryChan)
-				}(dev)
+	// 6.5 Dynamic Telemetry Poller Spawner
+	go func() {
+		activePollers := make(map[string]bool)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-engineCtx.Done():
+				return
+			case <-ticker.C:
+				devs, err := devRegistry.ListDevices(engineCtx)
+				if err != nil {
+					continue
+				}
+				for _, dev := range devs {
+					if dev.Protocol == domain.ProtocolPJLink {
+						if !activePollers[dev.ID] {
+							activePollers[dev.ID] = true
+							slog.Info("Spawning new telemetry poller for device", "device", dev.ID)
+							go func(d *domain.Device) {
+								_ = tcpComm.ListenTelemetry(engineCtx, d, telemetryChan)
+							}(dev)
+						}
+					}
+				}
 			}
 		}
-	}
+	}()
 
 	// 7. Connect to Cloud and Bind Topics (Background reconnect loop handles failures)
 	if err := mqttClient.Connect(); err != nil {
