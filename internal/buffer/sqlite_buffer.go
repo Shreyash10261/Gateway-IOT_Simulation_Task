@@ -81,27 +81,44 @@ func (s *SQLiteBuffer) AddData(dataType string, payload interface{}) error {
 }
 
 func (s *SQLiteBuffer) Fetch() ([]BufferedItem, error) {
-	rows, err := s.db.Query("SELECT timestamp, data_type, payload FROM buffer ORDER BY timestamp ASC")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query("SELECT id, timestamp, data_type, payload FROM buffer ORDER BY timestamp ASC")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query buffer: %w", err)
 	}
-	defer rows.Close()
 
 	var items []BufferedItem
+	var ids []int64
 	for rows.Next() {
+		var id int64
 		var item BufferedItem
 		var payloadStr string
-		if err := rows.Scan(&item.Timestamp, &item.DataType, &payloadStr); err != nil {
+		if err := rows.Scan(&id, &item.Timestamp, &item.DataType, &payloadStr); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 		item.Payload = json.RawMessage(payloadStr)
 		items = append(items, item)
+		ids = append(ids, id)
+	}
+	rows.Close()
+
+	if len(ids) > 0 {
+		maxId := ids[len(ids)-1]
+		if _, err := tx.Exec("DELETE FROM buffer WHERE id <= ?", maxId); err != nil {
+			return nil, fmt.Errorf("failed to delete fetched rows: %w", err)
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %w", err)
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
+
 	if items == nil {
 		items = []BufferedItem{}
 	}
