@@ -16,4 +16,3 @@ PROMETHEUS_METRICS:
   - "gateway_command_latency_seconds_count"
 PROMETHEUS_POLL_INTERVAL: "30s"
 PROMETHEUS_MQTT_TOPIC: "devices/edge-gateway-sim/messages/events/metrics"
-
