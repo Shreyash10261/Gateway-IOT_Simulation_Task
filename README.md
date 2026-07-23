@@ -64,6 +64,6 @@ The Edge Gateway is designed to run seamlessly alongside the telemetry and simul
 
 ## 📊 Metrics & Monitoring
 
-Once running, the Gateway exposes a Prometheus `/metrics` endpoint on port `9090`.
+Once running, the Gateway exposes a Prometheus `/metrics` endpoint on port `9090`..
 You can view raw telemetry by visiting:
 `http://localhost:9090/metrics`
